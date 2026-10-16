@@ -1,0 +1,30 @@
+[build-system]
+# jaxlib supplies the XLA FFI headers. Building with --no-build-isolation (recommended) uses the
+# jaxlib already installed in the environment, rather than downloading one.
+requires = ["setuptools>=64", "jaxlib"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ictile"
+version = "0.0.1"
+description = "Tiled simulation of Gaussian random fields (e.g. cosmological initial conditions) in JAX"
+readme = "README.md"
+authors = [{name = "Kendrick Smith"}]
+requires-python = ">=3.10"
+dependencies = ["jax", "numpy"]
+
+[project.urls]
+Homepage = "https://github.com/kmsmith137/ictile"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["ictile*"]
+
+[tool.setuptools.package-data]
+"ictile" = ["csrc/*", "*.so"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
