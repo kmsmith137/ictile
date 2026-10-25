@@ -23,7 +23,7 @@ test = ["pytest"]
 include = ["ictile*"]
 
 [tool.setuptools.package-data]
-"ictile" = ["csrc/*", "*.so"]
+"ictile" = ["csrc/*", "*.so", "_build_info.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

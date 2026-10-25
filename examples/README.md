@@ -17,7 +17,8 @@ The example uses two other packages besides ictile:
 - **GPU memory:** with the notebook's default `TILE = 128`, ~40 GB, mostly while the emulator is being compiled.
   With `TILE = 64`, ~16 GB.
 - **Python:** 3.11 or newer.
-- **Compilers:** a C++17 compiler (e.g. g++), and the CUDA compiler `nvcc`, both to build ictile's kernels.
+- **Compilers:** a C++17 compiler (e.g. g++), and the CUDA compiler `nvcc` (CUDA 12.8 or newer for the newest GPUs),
+  both to build ictile's kernels.
   - If you don't have a CUDA toolkit, the `nvcc` that pip installs with `jax[cuda13]` works (step 3).
 
 ## Installation
@@ -40,10 +41,8 @@ python -c "import jax; print(jax.devices())"      # should list CudaDevice(id=0)
 # 3. ictile, which compiles a C++ kernel and a CUDA kernel
 git clone https://github.com/kmsmith137/ictile
 cd ictile
-nvidia-smi --query-gpu=name,compute_cap --format=csv
-export ICTILE_CUDA_ARCH=80        # your GPU's compute capability without the dot (see below)
 # export ICTILE_NVCC=...          # only if nvcc is not found (see below)
-pip install --no-build-isolation -e .
+ICTILE_CUDA=1 pip install --no-build-isolation -e .     # ICTILE_CUDA=1: fail if the CUDA kernel can't be built
 cd ..
 
 # 4. The N-body emulator (pinned to the version this example was tested with)
@@ -58,12 +57,11 @@ pip install camb matplotlib jupyterlab
 
 **Notes on step 3:**
 
-- **`ICTILE_CUDA_ARCH`** selects the GPU architectures the CUDA kernel is compiled for. The default, `"89;90"`, covers
-  L40S, RTX 40xx and H100/H200 GPUs, and newer GPUs through PTX. Older GPUs need it set:
-  - `80` for A100;
-  - `86` for A40, A6000 and RTX 30xx.
-
-  Several values can be given, e.g. `"80;90"`.
+- **GPU architectures.** By default the CUDA kernel is compiled for compute capabilities 8.0, 8.6, 8.9, 9.0, 10.0 and
+  12.0, which covers A100, A40/A6000, RTX 30xx/40xx/50xx, L40S, H100/H200 and B200 GPUs. Newer GPUs are covered
+  through PTX.
+  - An nvcc older than CUDA 12.8 doesn't know 10.0 and 12.0, so those are left out, with a message.
+  - To build for other GPUs, set `ICTILE_CUDA_ARCH`, e.g. `"75"` for T4, or `"native"` for the GPU in this machine.
 - **Finding nvcc.** ictile looks for `nvcc` in `$ICTILE_NVCC`, then `$CUDA_HOME/bin`, then your `PATH`, then
   `/usr/local/cuda/bin`. On a cluster, `module load cuda` usually puts it on your `PATH`. Otherwise, use the `nvcc`
   that came with `jax[cuda13]`:
@@ -71,8 +69,8 @@ pip install camb matplotlib jupyterlab
   ```bash
   export ICTILE_NVCC=$(python -c "import nvidia, os; print(os.path.join(nvidia.__path__[0], 'cu13', 'bin', 'nvcc'))")
   ```
-- **If no working nvcc is found,** the build skips the CUDA kernel with only a message that pip hides. ictile then
-  falls back to a pure-JAX implementation, which is far too slow for this example. So check (next section).
+- **`ICTILE_CUDA=1`** makes the install fail if no working nvcc is found. Without it, the build would skip the CUDA
+  kernel with only a warning that pip hides, and ictile would then refuse to run on the GPU.
 
 ## Check the installation and run the example
 
@@ -98,12 +96,12 @@ linking length and the cosmology.
 
 ## Troubleshooting
 
-- **`ictile CUDA kernel: False`, or a warning that ictile is "falling back to the (slow) pure-JAX backend".** nvcc was
-  not found when ictile was built. Set `ICTILE_NVCC` (see above) and re-run `pip install --no-build-isolation -e .` in
-  the `ictile` directory.
-- **An error about "no kernel image" or "invalid device function".** The CUDA kernel was built for a different GPU.
-  Set `ICTILE_CUDA_ARCH`, delete `ictile/libictile_cuda.so` (it is only rebuilt if missing or out of date), and
-  reinstall.
+- **`ictile CUDA kernel: False`, or "ictile: the CUDA kernel is not available".** The message says why;
+  `python -c "import ictile; print(ictile.build_info())"` shows how ictile was built. Usually nvcc was not found:
+  set `ICTILE_NVCC` (see above) and re-run `ICTILE_CUDA=1 pip install --no-build-isolation -e .` in the `ictile`
+  directory.
+- **An error about "no kernel image is available".** The CUDA kernel wasn't built for this GPU. The message gives the
+  GPU's compute capability and the `ICTILE_CUDA_ARCH` setting to rebuild with; changing it triggers a rebuild.
 - **`AttributeError: module 'ictile' has no attribute ...`.** Python found the `ictile` *repository* directory
   instead of the installed package. This happens when Python runs in the directory that contains the clone. Run
   from somewhere else, e.g. `ictile/examples`.

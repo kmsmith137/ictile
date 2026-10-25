@@ -46,8 +46,9 @@ class TiledGRF:
       dtype: np.float32 or np.float64 (float64 requires jax_enable_x64).
       w: ES kernel width (default 8 in float32, 13 in float64).
       kz_batch: number of kz values processed per iteration (memory ~ kz_batch * 4 * ntile_x * ntile_y).
-      backend: 'custom' (C++/CUDA kernel), 'jax' (pure JAX, only practical for small nside),
-         or 'auto' (custom if available).
+      backend: 'custom' (C++/CUDA kernel), 'jax' (pure JAX, only practical for small nside), or 'auto'
+         (default): 'custom' if available. Otherwise, on the CPU, 'jax' with a warning; on a GPU, an error
+         (the pure-JAX backend is much slower there, so pass backend='jax' explicitly to use it).
       device: jax device (default: jax.devices()[0]).
       fixed_amplitude: if True, |a(k)| = sqrt(P(k)/V) exactly ("fixed" initial conditions).
       stream: integer in [0, 2^32), for generating independent fields with the same seed.
@@ -107,12 +108,18 @@ class TiledGRF:
 
         platform = self.device.platform
         if backend == 'auto':
-            backend = 'custom' if _ffi.available(platform) else 'jax'
-            if backend == 'jax':
+            if _ffi.available(platform):
+                backend = 'custom'
+            elif platform == 'gpu':
+                # On a GPU the pure-JAX backend is far slower, so silently falling back to it is almost never wanted.
+                raise RuntimeError(_ffi.unavailable_message(platform) + " To use the (much slower) pure-JAX "
+                                   "implementation on the GPU anyway, pass backend='jax'.")
+            else:
+                backend = 'jax'
                 warnings.warn(f"ictile: custom kernel not available on platform '{platform}' "
                               f"({_ffi.load_error(platform)}), falling back to the (slow) pure-JAX backend")
         elif (backend == 'custom') and not _ffi.available(platform):
-            raise RuntimeError(f"ictile: custom kernel not available on platform '{platform}': {_ffi.load_error(platform)}")
+            raise RuntimeError(_ffi.unavailable_message(platform))
         elif backend not in ('custom', 'jax'):
             raise ValueError(f"ictile.TiledGRF: backend='{backend}' must be 'auto', 'custom', or 'jax'")
         self.backend = backend

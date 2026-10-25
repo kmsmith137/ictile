@@ -41,8 +41,33 @@
 
 namespace ffi = xla::ffi;
 
+// Compute capabilities this library was built for, e.g. 80_86_89 (set by setup.py; one preprocessor token).
+#ifndef ICTILE_CUDA_ARCHS
+#define ICTILE_CUDA_ARCHS unknown
+#endif
+#define ICTILE_STR2(x) #x
+#define ICTILE_STR(x) ICTILE_STR2(x)
+
 namespace ictile {
 namespace {
+
+// Error message for a CUDA error, with the GPU's compute capability and the architectures this library was
+// built for (a mismatch gives "no kernel image is available for execution on the device").
+std::string cuda_error(const char *what, cudaError_t err)
+{
+    int dev = 0, major = 0, minor = 0;
+    cudaGetDevice(&dev);
+    cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev);
+    cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev);
+    std::string archs = ICTILE_STR(ICTILE_CUDA_ARCHS);
+    std::replace(archs.begin(), archs.end(), '_', ';');
+    std::string cc = std::to_string(major) + std::to_string(minor);
+    std::string msg = std::string("ictile: ") + what + ": " + cudaGetErrorString(err) + " (this GPU has compute capability "
+        + std::to_string(major) + "." + std::to_string(minor) + ", and ictile's CUDA kernel was built for " + archs + ")";
+    if ((err == cudaErrorNoKernelImageForDevice) || (err == cudaErrorInvalidDeviceFunction))
+        msg += ". Rebuild ictile with ICTILE_CUDA_ARCH=" + cc + ", or a list that includes " + cc + ".";
+    return msg;
+}
 
 template <typename Real> struct Cplx;
 template <> struct Cplx<float> { using T = float2; };
@@ -442,7 +467,7 @@ ffi::Error launch(const ModeGenerator<Real> &gen, Geometry g, const LaunchArgs &
     cudaError_t err = cudaSuccess;
     const Plan plan = get_plan<Real>(g, a.Bz, reinterpret_cast<const void *>(kernel), KMAX, err);
     if (err != cudaSuccess)
-        return ffi::Error::Internal(std::string("ictile: cudaFuncSetAttribute failed: ") + cudaGetErrorString(err));
+        return ffi::Error::Internal(cuda_error("cudaFuncSetAttribute failed", err));
     if (plan.T == 0)
         return ffi::Error::Internal("ictile: shared memory requirement too large");
     g.BY = plan.BY;
@@ -460,7 +485,7 @@ ffi::Error launch(const ModeGenerator<Real> &gen, Geometry g, const LaunchArgs &
 
     err = cudaGetLastError();
     if (err != cudaSuccess)
-        return ffi::Error::Internal(std::string("ictile: kernel launch failed: ") + cudaGetErrorString(err));
+        return ffi::Error::Internal(cuda_error("kernel launch failed", err));
     return ffi::Error::Success();
 }
 

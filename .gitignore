@@ -6,3 +6,4 @@ dist/
 *.so
 *~
 .envrc
+ictile/_build_info.json

@@ -14,8 +14,29 @@ Appendix A for implementation details). Code comments refer to these as "the not
 
 This compiles a C++ kernel (CPU) and a CUDA kernel (GPU), which are called from JAX through the
 XLA FFI. It needs jax, jaxlib (which supplies the XLA FFI headers), and a C++17 compiler. The CUDA
-kernel needs nvcc, and is skipped if no working nvcc is found. See `setup.py` for environment
-variables (`ICTILE_NVCC`, `ICTILE_CUDA_ARCH`, ...).
+kernel also needs nvcc.
+
+**On a GPU machine**, install with `ICTILE_CUDA=1`, so that a missing or broken nvcc is a build error:
+
+    ICTILE_CUDA=1 pip install --no-build-isolation -e .
+
+By default (`ICTILE_CUDA=auto`), the CUDA kernel is skipped, with a warning that pip only shows with `-v`, if no
+working nvcc is found. `ICTILE_CUDA=0` builds for the CPU only.
+
+Other build options (environment variables, see `setup.py`):
+- `ICTILE_NVCC`: the path to nvcc, if it is not found automatically.
+- `ICTILE_CUDA_ARCH`: the GPU compute capabilities to build for. The default is `"80;86;89;90;100;120"`, minus any
+  that nvcc doesn't support, plus PTX for newer GPUs.
+
+`ictile.build_info()` shows how the kernels were built, and whether they loaded.
+
+**At run time**, `TiledGRF(..., backend='auto')` (the default) uses the custom kernel for the device. If the CUDA
+kernel is missing, it raises an error on a GPU, rather than falling back to the much slower pure-JAX implementation
+(pass `backend='jax'` to use that). On the CPU it falls back with a warning.
+
+To make any problem with the CUDA kernel fail immediately, set `ICTILE_REQUIRE_CUDA=1`, or call
+`ictile.require_cuda()`. Importing ictile then fails unless the kernel is available and passes a quick self-test
+on every GPU that jax sees. The self-test catches, e.g., a GPU that the kernel wasn't built for.
 
 ## Example
 

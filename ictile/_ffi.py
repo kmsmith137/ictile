@@ -1,6 +1,7 @@
 """Loads the C++/CUDA kernels in csrc/ and registers them as XLA FFI targets."""
 
 import ctypes
+import json
 import os
 
 import numpy as np
@@ -17,13 +18,26 @@ _libs = {
 
 _available = set()
 _load_errors = {}
+_build_keys = {'cpu': 'cpu', 'gpu': 'cuda'}     # jax platform -> key in _build_info.json (written by setup.py)
+
+
+def _read_build_info():
+    try:
+        with open(os.path.join(_here, '_build_info.json')) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+_build_info = _read_build_info()
 
 
 def _load():
     for platform, (libname, ffi_platform, suffix) in _libs.items():
         path = os.path.join(_here, libname)
         if not os.path.exists(path):
-            _load_errors[platform] = f'{path} not found (was ictile built with this backend?)'
+            rec = _build_info.get(_build_keys[platform], {})
+            _load_errors[platform] = rec.get('reason') or f'{path} not found (was ictile built?)'
             continue
         try:
             lib = ctypes.cdll.LoadLibrary(path)
@@ -45,6 +59,61 @@ def available(platform):
 
 def load_error(platform):
     return _load_errors.get(platform, None)
+
+
+def unavailable_message(platform):
+    """Explains why the custom kernel isn't available on a jax platform, and what to do."""
+    if platform == 'gpu':
+        return (f'ictile: the CUDA kernel is not available: {load_error(platform)}. To build it, make nvcc available '
+                f'(see ICTILE_NVCC in setup.py), then reinstall ictile with ICTILE_CUDA=1, which makes a missing or broken '
+                f'nvcc a build error. See ictile.build_info().')
+    return f"ictile: the custom kernel is not available on platform '{platform}': {load_error(platform)}. See ictile.build_info()."
+
+
+def build_info():
+    """How ictile's kernels were built (from _build_info.json, written by setup.py), and whether they loaded.
+
+    Returns a dict with keys 'cpu' and 'gpu' (jax platform names). Each value is a dict with 'available'
+    (bool), 'error' (why it isn't available, or None), and the recorded build configuration, e.g. 'archs'
+    (compute capabilities) and 'nvcc' for the CUDA kernel."""
+    return {platform: dict(available=available(platform), error=load_error(platform),
+                           **_build_info.get(_build_keys[platform], {}))
+            for platform in _libs}
+
+
+_checked_devices = set()
+
+
+def require_cuda(devices=None):
+    """Raises RuntimeError unless the CUDA kernel is available and runs correctly on the given jax devices
+    (default: all GPUs that jax sees; it is an error if there are none).
+
+    Runs a tiny problem on each device (once per device per process), so that problems such as a GPU
+    architecture that the kernel wasn't built for show up immediately, with an explanation.
+    Called on import if the environment variable ICTILE_REQUIRE_CUDA=1."""
+    if not available('gpu'):
+        raise RuntimeError(unavailable_message('gpu'))
+    if devices is None:
+        try:
+            devices = jax.devices('gpu')
+        except RuntimeError as e:
+            raise RuntimeError(f'ictile: CUDA required, but jax sees no GPU (jax.devices() = {jax.devices()}): {e}') from e
+    from .grf import TiledGRF
+    for d in devices:
+        if d in _checked_devices:
+            continue
+        if d.platform != 'gpu':
+            raise RuntimeError(f'ictile: CUDA required, but {d} is not a GPU')
+        try:
+            g = TiledGRF(nside=16, box_size=16.0, pk=lambda k: np.ones_like(k), seed=1, ntile=8, backend='custom', device=d)
+            x = np.asarray(g.tile((0, 0, 0)))
+        except Exception as e:
+            cc = getattr(d, 'compute_capability', '?')
+            raise RuntimeError(f'ictile: the CUDA kernel failed a self-test on {d} ({d.device_kind}, compute capability {cc}), '
+                               f'built for compute capabilities {build_info()["gpu"].get("archs")}: {e}') from e
+        if not np.all(np.isfinite(x)) or not np.any(x != 0):
+            raise RuntimeError(f'ictile: the CUDA kernel failed a self-test on {d}: the output is all zeros or not finite')
+        _checked_devices.add(d)
 
 
 def cpu_scratch_size(nside, My, Ky, so_y, Py, Ly, Kx):

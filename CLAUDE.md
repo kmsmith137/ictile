@@ -4,6 +4,7 @@ Use the `tile` conda env for Python and compilers. Agent Bash calls don't trigge
 - Tests: `pytest` from the repo root (about 3.5 minutes; GPU tests are skipped if there is no GPU).
 - `ictile/csrc/grf_common.h` and `ictile/_modes.py` both define the random field realization (Philox counters, Box-Muller, Hermitian symmetry); they must stay in sync, and `tests/test_ictile.py::test_h2_custom_vs_jax` checks this.
 - Nsight Compute works in the sandbox: `/usr/local/cuda/bin/ncu --kernel-name regex:h2_kernel ...`.
+- Build options are environment variables documented in `setup.py` (`ICTILE_CUDA=auto|1|0`, `ICTILE_CUDA_ARCH`, `ICTILE_NVCC`). The build records its configuration in `ictile/_build_info.json` (not in git), which `ictile.build_info()` reports and which triggers a rebuild when the configuration changes.
 - `ICTILE_DEBUG=1` prints the CUDA kernel's launch plan (thread block shape, chosen by a cost model in `make_plan()`).
 - "The notes" in code comments are the Overleaf notes cloned in `../tiling_experiments/extern/extern/overleaf_nufft_ics` (Appendix A is `tiled_impl.tex`). Code comments cite them by algorithm and step number, and by equation label.
 - `../tiling_experiments/chain/` uses ictile (tiled ICs -> N-body emulator -> FoF), so keep the `TiledGRF` API compatible or update it there.
