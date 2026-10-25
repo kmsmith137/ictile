@@ -26,6 +26,8 @@ The example uses two other packages besides ictile:
 
 The commands below set up a fresh environment with CUDA 13. They were tested from scratch with Python 3.12.
 
+**On Perimeter's Symmetry cluster** (H200 GPUs), follow [`perimeter_h200.md`](perimeter_h200.md) instead.
+
 **CUDA 12:** replace `cuda13` with `cuda12` throughout, and use a CUDA 12 toolkit's `nvcc`. The pip packages for
 CUDA 12 don't include `nvcc`.
 
@@ -62,7 +64,8 @@ pip install camb matplotlib jupyterlab
   12.0, which covers A100, A40/A6000, RTX 30xx/40xx/50xx, L40S, H100/H200 and B200 GPUs. Newer GPUs are covered
   through PTX.
   - An nvcc older than CUDA 12.8 doesn't know 10.0 and 12.0, so those are left out, with a message.
-  - To build for other GPUs, set `ICTILE_CUDA_ARCH`, e.g. `"75"` for T4, or `"native"` for the GPU in this machine.
+  - To build for other GPUs, set `ICTILE_CUDA_ARCH`, e.g. `"75"` for T4, or `"native"` for the GPU in the machine you
+    build on (so not on a cluster login node without a GPU).
 - **Finding nvcc.** ictile looks for `nvcc` in `$ICTILE_NVCC`, then `$CUDA_HOME/bin`, then your `PATH`, then
   `/usr/local/cuda/bin`. On a cluster, `module load cuda` usually puts it on your `PATH`. Otherwise, use the `nvcc`
   that came with `jax[cuda13]`:

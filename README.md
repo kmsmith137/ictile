@@ -30,6 +30,8 @@ Other build options (environment variables, see `setup.py`):
 
 `ictile.build_info()` shows how the kernels were built, and whether they loaded.
 
+**On Perimeter's Symmetry cluster** (H200 GPUs), see [`examples/perimeter_h200.md`](examples/perimeter_h200.md).
+
 **At run time**, `TiledGRF(..., backend='auto')` (the default) uses the custom kernel for the device. If the CUDA
 kernel is missing, it raises an error on a GPU, rather than falling back to the much slower pure-JAX implementation
 (pass `backend='jax'` to use that). On the CPU it falls back with a warning.
@@ -37,6 +39,10 @@ kernel is missing, it raises an error on a GPU, rather than falling back to the 
 To make any problem with the CUDA kernel fail immediately, set `ICTILE_REQUIRE_CUDA=1`, or call
 `ictile.require_cuda()`. Importing ictile then fails unless the kernel is available and passes a quick self-test
 on every GPU that jax sees. The self-test catches, e.g., a GPU that the kernel wasn't built for.
+
+For tuning the CUDA kernel, `ICTILE_DEBUG=1` prints its launch plan: the thread block shape, which is chosen by a cost
+model in `make_plan()` (in `csrc/grf_cuda.cu`). The plan is printed once for each problem size, tile shape, dtype and
+GPU, when it is first used.
 
 ## Example
 
@@ -62,7 +68,7 @@ and float64 tiles to ~3e-12.
 
 On one NVIDIA L40S in float32, a 1024^3 tile of an 8192^3 box takes 4.2 seconds, or 0.6 hours for
 the full box. Every tile has to generate all nside^3 Fourier modes (2.4 of the 4.2 seconds here),
-so large tiles are more efficient.
+so large tiles are more efficient. On an H200, the same tile takes 3.8 seconds (0.54 hours for the full box).
 
 ## Examples
 
