@@ -10,7 +10,8 @@ Environment variables:
                        nvcc on PATH, /usr/local/cuda/bin/nvcc (the first that works).
   ICTILE_CUDA_ARCH     semicolon-separated list of compute capabilities, e.g. "80;90" (default "80;86;89;90;100;120",
                        minus any that nvcc doesn't support), plus PTX for the last one (for newer GPUs). Can also
-                       be one of nvcc's "native", "all", "all-major".
+                       be one of nvcc's "native" (the GPU in this machine; an error if there is none), "all",
+                       "all-major".
   ICTILE_CXXFLAGS      extra flags for the C++ compiler (default "-O3 -march=native")
 
 The build configuration is recorded in ictile/_build_info.json (see ictile.build_info()). A library is rebuilt
@@ -72,13 +73,17 @@ def find_nvcc():
     return None, 'no nvcc was found (set ICTILE_NVCC, or put nvcc on PATH)'
 
 
-def nvcc_works(nvcc):
+def nvcc_test_compile(nvcc, *flags):
+    """Compiles a trivial kernel, and returns the subprocess.CompletedProcess."""
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, 't.cu')
         with open(src, 'w') as f:
             f.write('__global__ void k(float *x) { x[0] = 1.0f; }\n')
-        r = subprocess.run([nvcc, '-c', src, '-o', os.path.join(d, 't.o')], capture_output=True)
-        return r.returncode == 0
+        return subprocess.run([nvcc, *flags, '-c', src, '-o', os.path.join(d, 't.o')], capture_output=True, text=True)
+
+
+def nvcc_works(nvcc):
+    return nvcc_test_compile(nvcc).returncode == 0
 
 
 def nvcc_version(nvcc):
@@ -93,6 +98,14 @@ def cuda_archs(nvcc):
         archs = [a.strip() for a in os.environ['ICTILE_CUDA_ARCH'].split(';') if a.strip()]
         if not archs:
             raise RuntimeError('ictile: ICTILE_CUDA_ARCH is empty')
+        if archs == ['native']:
+            # Without a GPU (e.g. on a cluster login node), nvcc -arch=native only warns, and builds for its
+            # default architecture, which then has to be JIT-compiled on the real GPU (and fails if the driver
+            # is older than nvcc).
+            r = nvcc_test_compile(nvcc, '-arch=native')
+            if (r.returncode != 0) or ('Cannot find valid GPU' in r.stderr):
+                raise RuntimeError(f'ictile: ICTILE_CUDA_ARCH=native, but nvcc finds no GPU on this machine ({r.stderr.strip()}). '
+                                   f'Build on a machine with the GPU, or list its compute capabilities, e.g. ICTILE_CUDA_ARCH=90.')
         return archs
 
     # Default: drop architectures that this nvcc doesn't support (e.g. 100 and 120 need CUDA >= 12.8).
