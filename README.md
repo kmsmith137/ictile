@@ -43,6 +43,12 @@ On one NVIDIA L40S in float32, a 1024^3 tile of an 8192^3 box takes 4.2 seconds,
 the full box. Every tile has to generate all nside^3 Fourier modes (2.4 of the 4.2 seconds here),
 so large tiles are more efficient.
 
+## Examples
+
+[`examples/01_halo_catalog.ipynb`](examples/01_halo_catalog.ipynb) chains ictile with an N-body emulator and a
+friends-of-friends halo finder to make a halo catalog. See [`examples/README.md`](examples/README.md) for how to install
+the extra packages.
+
 ## Tests
 
     pytest
