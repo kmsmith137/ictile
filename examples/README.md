@@ -1,8 +1,9 @@
 # ictile examples
 
-| notebook | what it does |
+| | what it is |
 |---|---|
 | [`01_halo_catalog.ipynb`](01_halo_catalog.ipynb) | Initial conditions (ictile) → nonlinear displacements (N-body emulator) → friends-of-friends halos (jz-tree) → a halo catalog and its mass function. 1024³ particles in a 2 Gpc/*h* box, on one GPU. |
+| [`quijote_hmf/`](quijote_hmf) | Halo counts from the Quijote N-body simulations, which the notebook's mass function is compared with, and the script that made them from the Quijote catalogs. |
 
 The example uses two other packages besides ictile:
 
