@@ -63,6 +63,11 @@ the same length units as `box_size`. The three components are computed one at a 
 Tiles can have any shape `ntile=(nx, ny, nz)` with `1 <= n_i <= nside/2`. For speed, prefer tiles
 which are longer along z (the per-kz work scales with nx*ny).
 
+`ntile=nside` is also allowed: every tile is then the whole box, rolled so that `start` is at index 0, computed
+with an ordinary FFT of all the modes (in pure JAX). This is for boxes that fit in memory: `tile()` needs memory for
+~3 nside^3 floats, and `displacement_tile()` for ~8 nside^3 floats. It's useful when a calculation needs tiles larger
+than `nside/2`: compute the whole box once, and cut the tiles from it.
+
 Float32 tiles agree with an ordinary FFT of the full box to ~4e-7 rms (relative to rms(delta)),
 and float64 tiles to ~3e-12.
 

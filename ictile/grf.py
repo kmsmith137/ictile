@@ -35,6 +35,10 @@ class TiledGRF:
     agrees with the full box to ~1e-6 in float32 (w=8), or ~1e-11 in float64 (w=13), relative to
     rms(delta).
 
+    Alternatively, ntile = nside makes every tile the whole box (rolled so that 'start' is at index 0),
+    computed with an ordinary FFT of all the modes, in pure JAX. This is for boxes that fit in memory:
+    a tile needs memory for ~3 nside^3 floats, and a displacement tile for ~8 nside^3 floats.
+
     Constructor arguments:
 
       nside: number of pixels per side of the box (even, <= 65536).
@@ -42,13 +46,14 @@ class TiledGRF:
       pk: power spectrum, a vectorized function of k (a float64 numpy array), which returns P(k).
       seed: integer, 0 <= seed < 2^64.
       ntile: tile shape, either an integer (for a cubical tile) or a tuple (ntile_x, ntile_y, ntile_z),
-         with 1 <= ntile_i <= nside/2.
+         with 1 <= ntile_i <= nside/2. Or ntile = nside, for the whole box (see above).
       dtype: np.float32 or np.float64 (float64 requires jax_enable_x64).
       w: ES kernel width (default 8 in float32, 13 in float64).
       kz_batch: number of kz values processed per iteration (memory ~ kz_batch * 4 * ntile_x * ntile_y).
       backend: 'custom' (C++/CUDA kernel), 'jax' (pure JAX, only practical for small nside), or 'auto'
          (default): 'custom' if available. Otherwise, on the CPU, 'jax' with a warning; on a GPU, an error
          (the pure-JAX backend is much slower there, so pass backend='jax' explicitly to use it).
+         With ntile = nside, the backend is always 'jax' (the custom kernel isn't used, or needed).
       device: jax device (default: jax.devices()[0]).
       fixed_amplitude: if True, |a(k)| = sqrt(P(k)/V) exactly ("fixed" initial conditions).
       stream: integer in [0, 2^32), for generating independent fields with the same seed.
@@ -67,8 +72,10 @@ class TiledGRF:
             raise ValueError(f"ictile.TiledGRF: nside={nside} must be even, and 4 <= nside <= 65536")
         nt = np.asarray(ntile, dtype=int)
         nt = np.full(3, int(nt)) if (nt.ndim == 0) else nt
-        if (nt.shape != (3,)) or np.any(nt < 1) or np.any(2*nt > nside):
-            raise ValueError(f"ictile.TiledGRF: ntile={ntile} must be an integer or 3 integers, with 1 <= ntile <= nside/2 (nside={nside})")
+        full = (nt.shape == (3,)) and bool(np.all(nt == nside))
+        if (nt.shape != (3,)) or np.any(nt < 1) or (np.any(2*nt > nside) and not full):
+            raise ValueError(f"ictile.TiledGRF: ntile={ntile} must be an integer or 3 integers, with 1 <= ntile <= nside/2, "
+                             f"or ntile = nside for the whole box (nside={nside})")
         if not (0 <= seed < 2**64) or not (0 <= stream < 2**32):
             raise ValueError("ictile.TiledGRF: need 0 <= seed < 2^64, and 0 <= stream < 2^32")
 
@@ -77,14 +84,32 @@ class TiledGRF:
         self.seed = int(seed)
         self.stream = int(stream)
         self.ntile = tuple(int(n) for n in nt)
-        self.M = tuple(2*n for n in self.ntile)
-        self.P = tuple(_tables.axis_phases(self.nside, m)[1] for m in self.M)    # number of fractional offsets
-        self.w = int(w) if (w is not None) else (8 if (self.dtype == np.float32) else 13)
-        self.beta = float(beta) if (beta is not None) else (2.30 * self.w)
+        self.full = full
         self.kz_batch = int(kz_batch)
         self.fixed_amplitude = bool(fixed_amplitude)
         self.cdtype = np.dtype(np.complex64 if (self.dtype == np.float32) else np.complex128)
         self.device = device if (device is not None) else jax.devices()[0]
+        put = lambda x, dt: jax.device_put(np.asarray(x, dtype=dt), self.device)
+        sqrtp, self.tab_scale = _tables.sqrtp_table(pk, self.nside, self.box_size, ntab)
+
+        if self.full:
+            # ntile = nside: every tile is the whole box, from an ordinary FFT of all the modes, which are generated
+            # in pure JAX (see _full_tile_impl()). The custom kernel, and the regridding parameters and tables
+            # (M, P, w, beta, dmin, K), aren't used.
+            if backend not in ('auto', 'jax'):
+                raise ValueError(f"ictile.TiledGRF: backend='{backend}' must be 'auto' or 'jax' when ntile = nside "
+                                 f"(the whole box is computed in pure JAX)")
+            self.backend = 'jax'
+            self.M = self.P = self.w = self.beta = self.dmin = self.K = None
+            self._tables = dict(sqrtp=put(sqrtp, self.dtype))
+            self._tile_jit = jax.jit(self._full_tile_impl, static_argnames=('displacement',))
+            self._full_jit = jax.jit(self._full_box_impl, static_argnames=('deriv',))
+            return
+
+        self.M = tuple(2*n for n in self.ntile)
+        self.P = tuple(_tables.axis_phases(self.nside, m)[1] for m in self.M)    # number of fractional offsets
+        self.w = int(w) if (w is not None) else (8 if (self.dtype == np.float32) else 13)
+        self.beta = float(beta) if (beta is not None) else (2.30 * self.w)
 
         # Per-axis regridding weights and de-apodization factors (axes may have different P).
         dmin, ws, psi = [], [], []
@@ -102,7 +127,6 @@ class TiledGRF:
         so_x, pf_x, _, _ = _tables.gather_tables(self.nside, self.M[0], self.dmin[0], ws[0])
         so_y, _, self.Ly, gw_y = _tables.gather_tables(self.nside, self.M[1], self.dmin[1], ws[1])
         self._cpu_scratch = _ffi.cpu_scratch_size(self.nside, self.M[1], self.K[1], so_y, self.P[1], self.Ly, self.K[0])
-        sqrtp, self.tab_scale = _tables.sqrtp_table(pk, self.nside, self.box_size, ntab)
         k0, Ap, Am = _tables.zregrid_windows(self.nside, self.ntile[2], self.dmin[2], ws[2], self.kz_batch)
         self.nbatch = len(k0)
 
@@ -124,7 +148,6 @@ class TiledGRF:
             raise ValueError(f"ictile.TiledGRF: backend='{backend}' must be 'auto', 'custom', or 'jax'")
         self.backend = backend
 
-        put = lambda x, dt: jax.device_put(np.asarray(x, dtype=dt), self.device)
         self._tables = dict(
             ws_x=put(ws[0], self.dtype),
             ws_y=put(ws[1], self.dtype),
@@ -165,18 +188,24 @@ class TiledGRF:
         return self._tile_jit(self._start(start), self._tables, displacement=True)
 
     def full_box(self):
-        """Returns the full box (shape (nside,)*3), using an ordinary FFT. For testing at small nside."""
+        """Returns the full box (shape (nside,)*3), from an ordinary FFT of all the modes, generated in pure JAX.
+
+        Works for any ntile. With ntile = nside, it is the same as tile((0,0,0)).
+        """
         return self._full_jit(self._tables)
 
     def full_box_displacement(self):
-        """Returns the displacement psi in the full box (shape (3,) + (nside,)*3). For testing at small nside."""
+        """Returns the displacement psi in the full box (shape (3,) + (nside,)*3), as in full_box()."""
         return jnp.stack([self._full_jit(self._tables, deriv=j) for j in range(3)])
 
     def h2(self, kz0, start=(0, 0, 0), backend=None, deriv=None):
         """Returns the regridded array H2[b, k'x, k'y] (shape (kz_batch, Mx, My)) for kz = kz0 + b (for testing).
 
         If deriv = j (0 <= j < 3), the modes are multiplied by i n_j / n^2 (see _modes.mode_values()).
+        Not available with ntile = nside, which doesn't regrid.
         """
+        if self.full:
+            raise RuntimeError('ictile.TiledGRF.h2(): not available with ntile = nside, which uses an ordinary FFT')
         kz0 = jax.device_put(np.int32(kz0), self.device)
         return self._h2_jit(kz0, self._start(start), self._tables, backend=(backend or self.backend), deriv=deriv)
 
@@ -276,6 +305,17 @@ class TiledGRF:
         out = jnp.zeros((ncomp,) + self.ntile, dtype=self.dtype)
         out = lax.fori_loop(0, ncomp, component, out)
         return out if displacement else out[0]
+
+    def _full_tile_impl(self, start, tables, displacement=False):
+        """For ntile = nside: delta in the whole box (shape (nside,)*3), or the displacement psi (shape (3,) +
+        (nside,)*3), from an ordinary FFT, with element [i,j,k] at pixel (start + (i,j,k)) mod nside."""
+        if displacement:
+            f = jnp.stack([self._full_box_impl(tables, deriv=j) for j in range(3)])
+        else:
+            f = self._full_box_impl(tables)[None]
+        for i in range(3):
+            f = jnp.take(f, jnp.arange(self.nside, dtype=jnp.int32) + start[i], axis=i+1, mode='wrap')
+        return f if displacement else f[0]
 
     def _full_box_impl(self, tables, deriv=None):
         N = self.nside

@@ -63,6 +63,16 @@ def test_auto_backend_with_kernel():
             assert g.backend == 'custom'
 
 
+def test_whole_box_needs_no_kernel(no_kernel):
+    # ntile = nside doesn't use the custom kernel: the backend is 'jax', with no error or warning if it's missing.
+    for platform in ['cpu'] + (['gpu'] if HAS_GPU else []):
+        no_kernel(platform)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            g = ictile.TiledGRF(nside=16, box_size=16.0, pk=pk, seed=1, ntile=16, device=device(platform))
+        assert g.backend == 'jax'
+
+
 @needs_gpu
 def test_require_cuda(no_kernel):
     if not ictile.custom_kernel_available('gpu'):

@@ -172,6 +172,52 @@ def test_displacement_vs_full_box(platform, N, nt):
             assert e.max() < tol_max, msg
 
 
+@pytest.mark.parametrize('platform', PLATFORMS)
+@pytest.mark.parametrize('dtype', [np.float32, np.float64])
+def test_whole_box_tiles(platform, dtype):
+    # ntile = nside: tile() and displacement_tile() are the full box, rolled so that 'start' is at index 0.
+    N = 32
+    dev = device(platform)
+    g = TiledGRF(N, 2.0*N, pk_test, seed=777, ntile=N, dtype=dtype, device=dev)
+    assert g.full and (g.backend == 'jax')
+    full, psi = np.asarray(g.full_box()), np.asarray(g.full_box_displacement())
+    tol = 1e-6 if (dtype == np.float32) else 1e-13
+    for start in [(0, 0, 0), (N-5, 17, N//2 + 3), (2*N + 1, -3, 7)]:
+        t, d = np.asarray(g.tile(start)), np.asarray(g.displacement_tile(start))
+        assert t.shape == (N, N, N) and d.shape == (3, N, N, N)
+        assert np.abs(t - tile_of(full, start, N)).max() < tol * full.std(), start
+        assert np.abs(d - np.stack([tile_of(psi[j], start, N) for j in range(3)])).max() < tol * psi.std(), start
+
+
+@pytest.mark.parametrize('platform', PLATFORMS)
+def test_whole_box_vs_tiles(platform):
+    # In float64, whole-box tiles (an ordinary FFT) agree with ordinary tiles of the same field, to the accuracy of
+    # the tiled algorithm (see test_tile_vs_full_box).
+    N, nt, start = 64, (16, 32, 10), (59, 17, 35)
+    dev = device(platform)
+    g = TiledGRF(N, 2.0*N, pk_test, seed=777, ntile=N, dtype=np.float64, device=dev)
+    h = TiledGRF(N, 2.0*N, pk_test, seed=777, ntile=nt, dtype=np.float64, device=dev, kz_batch=12)
+    a = np.asarray(g.displacement_tile(start))[:, :nt[0], :nt[1], :nt[2]]
+    b = np.asarray(h.displacement_tile(start))
+    e = np.abs(a - b) / a.std(axis=(1, 2, 3))[:, None, None, None]
+    assert np.sqrt(np.mean(e**2)) < 1e-11 and e.max() < 1e-10
+
+
+def test_ntile_validation():
+    # ntile must be <= nside/2 on every axis, or nside on every axis.
+    cpu = jax.devices('cpu')[0]
+    for nt in [33, 63, (64, 64, 16), (64, 40, 64), 0]:
+        with pytest.raises(ValueError, match='ntile'):
+            TiledGRF(64, 64.0, pk_test, seed=1, ntile=nt, device=cpu)
+    assert not TiledGRF(64, 64.0, pk_test, seed=1, ntile=(32, 1, 32), device=cpu).full
+    g = TiledGRF(64, 64.0, pk_test, seed=1, ntile=(64, 64, 64), device=cpu)
+    assert g.full and (g.ntile == (64, 64, 64))
+    with pytest.raises(RuntimeError, match='ntile = nside'):
+        g.h2(0)
+    with pytest.raises(ValueError, match='backend'):
+        TiledGRF(64, 64.0, pk_test, seed=1, ntile=64, backend='custom', device=cpu)
+
+
 def test_displacement_divergence():
     # The displacement psi = -grad(del^{-2} delta) satisfies div(psi) = -delta and curl(psi) = 0.
     N, L = 32, 50.0
