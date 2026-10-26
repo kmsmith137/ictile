@@ -78,8 +78,9 @@ so large tiles are more efficient. On an H200, the same tile takes 3.8 seconds (
 ## Examples
 
 [`examples/01_halo_catalog.ipynb`](examples/01_halo_catalog.ipynb) chains ictile with an N-body emulator and a
-friends-of-friends halo finder to make a halo catalog. See [`examples/README.md`](examples/README.md) for how to install
-the extra packages.
+friends-of-friends halo finder to make a halo catalog, and
+[`examples/02_make_halo_catalog.py`](examples/02_make_halo_catalog.py) does the same in batch jobs, for many
+catalogs. See [`examples/README.md`](examples/README.md) for how to install the extra packages.
 
 ## Tests
 

@@ -20,8 +20,8 @@ git clone https://github.com/kmsmith137/ictile
 cd ictile
 pip install --no-build-isolation -e .
 
-# For the example notebook, and its Jupyter kernel (see "Interactive Jupyter" below)
-pip install "git+https://github.com/dsjamieson/jax_nbody_emulator.git@55a95dc" "jztree[cuda13]" camb matplotlib jupyterlab
+# For the examples, and the Jupyter kernel (see "Interactive Jupyter" below)
+pip install "git+https://github.com/dsjamieson/jax_nbody_emulator.git@55a95dc" "jztree[cuda13]" camb matplotlib jupyterlab h5py
 python -m ipykernel install --user --name ictile --display-name "Python (ictile)" --env PYTHONPATH ""
 ```
 
@@ -54,6 +54,31 @@ sbatch -p h200debugq --gpus 1 --cpus-per-gpu=4 -t 00:20:00 -J halo-catalog -o %x
 This writes the executed notebook, with its plots, to `01_halo_catalog.out.ipynb`, and the halo catalog to
 `halos.npz`. The run needs ~7 GB of host memory, well within the ~83 GB that comes with `--cpus-per-gpu=4`. For a
 bigger box (`NSIDE`), or anything else longer than an hour, use `-p h200q` and a longer `-t`.
+
+## Make many halo catalogs
+
+[`02_make_halo_catalog.py`](02_make_halo_catalog.py) (see `README.md` in this directory) makes one catalog per seed. A
+512³ catalog with velocities takes 37 s on an H200, so 100 catalogs take about an hour of GPU time. The preemptible
+partition `h200preq` suits this well: it has no caps, a preempted job is requeued automatically, and the script then
+skips the catalogs that already exist. For example, two jobs of 50 catalogs each, from `ictile/examples` with the
+`ictile` env active, after `mkdir logs` (Slurm doesn't create the log directory):
+
+```bash
+#!/bin/bash
+#SBATCH -p h200preq
+#SBATCH --requeue
+#SBATCH --open-mode=append
+#SBATCH --gpus 1
+#SBATCH --cpus-per-gpu=4
+#SBATCH -t 01:30:00
+#SBATCH --array=0-1
+#SBATCH -J halos
+#SBATCH -o logs/%x-%A_%a.out
+S=$((SLURM_ARRAY_TASK_ID * 50))
+python 02_make_halo_catalog.py $S $((S + 50)) --outdir catalogs/
+```
+
+`--open-mode=append` keeps the log of a run that was preempted.
 
 ## Interactive Jupyter
 

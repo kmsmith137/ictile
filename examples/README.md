@@ -3,9 +3,10 @@
 | | what it is |
 |---|---|
 | [`01_halo_catalog.ipynb`](01_halo_catalog.ipynb) | Initial conditions (ictile) → nonlinear displacements (N-body emulator) → friends-of-friends halos (jz-tree) → a halo catalog and its mass function. 1024³ particles in a 2 Gpc/*h* box, on one GPU. |
+| [`02_make_halo_catalog.py`](02_make_halo_catalog.py) | The notebook's pipeline as a script for batch jobs: makes many halo catalogs (positions, velocities, masses), one HDF5 file each. The defaults match the Quijote simulations: 512³ particles in a 1 Gpc/*h* box, at z = 0. |
 | [`quijote_hmf/`](quijote_hmf) | Halo counts from the Quijote N-body simulations, which the notebook's mass function is compared with, and the script that made them from the Quijote catalogs. |
 
-The example uses two other packages besides ictile:
+The examples use two other packages besides ictile:
 
 - **[jax_nbody_emulator](https://github.com/dsjamieson/jax_nbody_emulator)**: the field-level N-body emulator of
   Jamieson et al. ([arXiv:2408.07699](https://arxiv.org/abs/2408.07699)).
@@ -54,8 +55,8 @@ pip install "git+https://github.com/dsjamieson/jax_nbody_emulator.git@55a95dc"
 # 5. jz-tree: prebuilt wheels, no compilation needed
 pip install "jztree[cuda13]"
 
-# 6. For the notebook
-pip install camb matplotlib jupyterlab
+# 6. For the notebook and the script
+pip install camb matplotlib jupyterlab h5py
 ```
 
 **Notes on step 3:**
@@ -97,6 +98,27 @@ jupyter nbconvert --to notebook --execute --inplace 01_halo_catalog.ipynb
 
 The parameters are in the notebook's "Global parameters" cell: `NSIDE` (box size), `SEED`, `REDSHIFT`, `TILE`, the
 linking length and the cosmology.
+
+## Making many halo catalogs
+
+[`02_make_halo_catalog.py`](02_make_halo_catalog.py) runs the notebook's pipeline as a script, for batch jobs:
+
+```bash
+python 02_make_halo_catalog.py 300 400 --outdir catalogs/
+```
+
+This writes `catalogs/halo_catalog_{i}.h5` for `i` in `range(300, 400)`, each from its own random seed (saved in the
+file). Catalogs that already exist are skipped, so rerunning an interrupted job finishes it. The defaults match the
+fiducial Quijote simulations: 512³ particles in a 1 Gpc/*h* box, in the same cosmology, at z = 0. See `--help` for the
+options: box size, redshift, cosmology, linking length, `--no-velocities`, and more.
+
+Each file has the columns `x, y, z` (Mpc), `vx, vy, vz` (peculiar velocity / c), `mass` (M☉) and `npart`, with no
+factors of *h*. This is the HDF5 layout of [kszx](https://github.com/kmsmith137/kszx)'s `Catalog`, and the units of its
+Quijote halo catalogs (`kszx.quijote.read_halos()`). Read a file with `kszx.Catalog.from_h5()`, or with h5py: each
+column is a dataset, and the parameters of the run are file attributes.
+
+On an H200, a 512³ catalog takes 37 s with velocities, or ~13 s without. A 1024³ catalog takes ~4.8 minutes with
+velocities, or ~2.3 minutes without. Each run also spends up to ~2 minutes on setup and compilation.
 
 ## Troubleshooting
 
