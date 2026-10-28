@@ -80,6 +80,63 @@ python 02_make_halo_catalog.py $S $((S + 50)) --outdir catalogs/
 
 `--open-mode=append` keeps the log of a run that was preempted.
 
+## Compare with the Quijote simulations (CPU)
+
+[`03_halo_power_spectra.py`](03_halo_power_spectra.py) computes the power spectra for
+[`04_monte_carlo_comparison.ipynb`](04_monte_carlo_comparison.ipynb). It needs [kszx](https://github.com/kmsmith137/kszx)
+and h5py but no GPU, so install it in its own env (see kszx's README) and run it on the CPU nodes. The CPU partitions
+`amdq` and `defq`, and the preemptible `amdpreq` and `preq`, can all be listed in one job: it runs on whichever
+starts it first. Short time limits (`-t`) help a job start early, in gaps between bigger jobs. Keep the files in
+`$HOME` or `/mnt/beegfs`: `/gpfs` isn't mounted on the AMD nodes.
+
+**Quijote catalogs.** kszx downloads them with Globus, through a Globus Connect Personal endpoint that you run on the
+head node. With the kszx env active (it needs `globus-cli`):
+
+```bash
+module load globusconnectpersonal/3.3.0
+globus login
+globus gcp create mapped "mn003 ($USER)"       # prints a setup key
+globusconnectpersonal -setup SETUP_KEY
+nohup globusconnectpersonal -start -restrict-paths rw~/ > ~/globus_gcp.log 2>&1 &
+python -c "import kszx; kszx.quijote.download('fiducial', 1000, products=('halos',))"     # 34 GB
+globusconnectpersonal -stop                     # when the transfer is done
+```
+
+`-restrict-paths` limits what the endpoint can write to: add `,rw/mnt/beegfs/$USER` if kszx's data directory
+(`$KSZX_DATA_DIR`, or `~/kszx_data`) is there.
+
+**Spectra.** With the kszx env active (the jobs inherit it), from `ictile/examples`, after `mkdir logs`. First the
+matching of the two halo samples (~10 minutes):
+
+```bash
+sbatch -p amdq,defq,preq,amdpreq --requeue -c 16 --mem=32G -t 00:40:00 -J match -o logs/%x-%j.out --wrap \
+  "python 03_halo_power_spectra.py match --emulator-dir catalogs/ --out spectra/matching.json"
+```
+
+Then the spectra of 1000 catalogs of each kind, as 40 tasks of 50 catalogs. A catalog takes ~17 s on the AMD nodes
+(`amdq`, `amdpreq`) and ~28 s on the Intel nodes (`defq`, `preq`), so a task takes 14 to 23 minutes:
+
+```bash
+#!/bin/bash
+#SBATCH -p amdq,defq,preq,amdpreq
+#SBATCH --requeue
+#SBATCH --open-mode=append
+#SBATCH -c 16
+#SBATCH --mem=32G
+#SBATCH -t 00:40:00
+#SBATCH --array=0-39
+#SBATCH -J pk
+#SBATCH -o logs/%x-%A_%a.out
+T=$SLURM_ARRAY_TASK_ID
+KIND=$( (( T < 20 )) && echo emulator || echo quijote )
+S=$(( (T % 20) * 50 ))
+python 03_halo_power_spectra.py compute $KIND $S $((S + 50)) --outdir spectra/ --emulator-dir catalogs/ \
+    --matching spectra/matching.json
+```
+
+A task that was preempted, or that ran out of time, finishes when resubmitted: the files that exist are skipped. Then
+run `04_monte_carlo_comparison.ipynb` with `SPECTRA_DIR = 'spectra'` (a minute, on the head node or in JupyterHub).
+
 ## Interactive Jupyter
 
 **JupyterHub** (https://symmetry.pitp.io). Under "Server Options", choose "GPU node - H200 GPU - 1 GPU, 1 hour". Your

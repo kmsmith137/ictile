@@ -4,7 +4,9 @@
 |---|---|
 | [`01_halo_catalog.ipynb`](01_halo_catalog.ipynb) | Initial conditions (ictile) → nonlinear displacements (N-body emulator) → friends-of-friends halos (jz-tree) → a halo catalog and its mass function. 1024³ particles in a 2 Gpc/*h* box, on one GPU. |
 | [`02_make_halo_catalog.py`](02_make_halo_catalog.py) | The notebook's pipeline as a script for batch jobs: makes many halo catalogs (positions, velocities, masses), one HDF5 file each. The defaults match the Quijote simulations: 512³ particles in a 1 Gpc/*h* box, at z = 0. |
-| [`quijote_hmf/`](quijote_hmf) | Halo counts from the Quijote N-body simulations, which the notebook's mass function is compared with, and the script that made them from the Quijote catalogs. |
+| [`03_halo_power_spectra.py`](03_halo_power_spectra.py) | Power spectra of many catalogs from `02_make_halo_catalog.py`, and of the Quijote N-body simulations: halo density, momentum (gradient and curl modes), and their cross-spectra; for all halos, and for subsamples matched to the same large-scale bias and number density. Runs on CPUs, with kszx. |
+| [`04_monte_carlo_comparison.ipynb`](04_monte_carlo_comparison.ipynb) | Plots from the spectra of `03_halo_power_spectra.py`: emulator vs. Quijote power spectra, the correlation of density and momentum, a residual field with the velocity-inferred density removed, and the covariance of the halo power spectrum. |
+| [`quijote_hmf/`](quijote_hmf) | Halo counts from the Quijote N-body simulations, which the first notebook's mass function is compared with, and the script that made them (with kszx). |
 
 The examples use two other packages besides ictile:
 
@@ -12,6 +14,10 @@ The examples use two other packages besides ictile:
   Jamieson et al. ([arXiv:2408.07699](https://arxiv.org/abs/2408.07699)).
 - **[jz-tree](https://github.com/jstuecker/jztree)** (`jztree`): GPU friends-of-friends and tree algorithms in JAX
   ([arXiv:2604.05885](https://arxiv.org/abs/2604.05885)).
+
+The comparison with the Quijote simulations (`03_halo_power_spectra.py` and `quijote_hmf/`) also uses
+**[kszx](https://github.com/kmsmith137/kszx)**, to read and download the Quijote catalogs and to estimate power
+spectra. It needs neither ictile nor a GPU, so it can have its own environment.
 
 ## Requirements
 
@@ -119,6 +125,39 @@ column is a dataset, and the parameters of the run are file attributes.
 
 On an H200, a 512³ catalog takes 37 s with velocities, or ~13 s without. A 1024³ catalog takes ~4.8 minutes with
 velocities, or ~2.3 minutes without. Each run also spends up to ~2 minutes on setup and compilation.
+
+## Comparing with the Quijote simulations
+
+[`04_monte_carlo_comparison.ipynb`](04_monte_carlo_comparison.ipynb) compares halo statistics from 1000 emulated
+simulations with 1000 Quijote N-body simulations, which have the same cosmology and resolution. The heavy lifting is
+done beforehand, by scripts suited to batch jobs, so the notebook only reads power spectra and makes plots:
+
+1. **Emulated catalogs** (GPU; 37 s per catalog on an H200): `python 02_make_halo_catalog.py 0 1000 --outdir catalogs/`
+2. **Quijote catalogs** (34 MB each), downloaded with Globus into kszx's data directory (`$KSZX_DATA_DIR/quijote`).
+   This needs `globus login` and a Globus endpoint on your machine; see `kszx/globus_utils.py`.
+
+   ```bash
+   python -c "import kszx; kszx.quijote.download('fiducial', 1000, products=('halos',))"
+   ```
+3. **Matching** (CPU, ~10 minutes): chooses subsamples of the two kinds of catalogs with the same large-scale halo bias
+   and number density, from 300 catalogs of each kind.
+
+   ```bash
+   python 03_halo_power_spectra.py match --emulator-dir catalogs/ --out spectra/matching.json
+   ```
+4. **Power spectra** (CPU, 15–30 s per catalog with 16 threads), one file per catalog, with the spectra of all halos and
+   of the matched subsample, and the halo counts for the mass function. Split the catalogs into ranges for a job
+   array; files that exist are skipped, so a job that was interrupted finishes when rerun.
+
+   ```bash
+   python 03_halo_power_spectra.py compute emulator 0 1000 --outdir spectra/ --emulator-dir catalogs/ \
+       --matching spectra/matching.json
+   python 03_halo_power_spectra.py compute quijote 0 1000 --outdir spectra/ --matching spectra/matching.json
+   ```
+5. **Plots:** set `SPECTRA_DIR` in the notebook's first cell, and run it (about a minute; numpy and matplotlib only).
+
+See `python 03_halo_power_spectra.py --help` for the definitions of the fields and the file format, and
+[`perimeter_h200.md`](perimeter_h200.md) for batch scripts.
 
 ## Troubleshooting
 
